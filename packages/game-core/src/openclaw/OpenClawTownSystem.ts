@@ -14,11 +14,7 @@
 import { System } from '../ecs/System';
 import type { World } from '../ecs/World';
 import type { EntityId } from '../ecs/Entity';
-import { TRANSFORM } from '../ecs/components/TransformComponent';
-import type { TransformComponent, Vector3 } from '../ecs/components/TransformComponent';
-import { BUILDING } from '../ecs/components/BuildingComponent';
-import type { BuildingComponent } from '../ecs/components/BuildingComponent';
-import { CITIZEN } from '../ecs/components/CitizenComponent';
+import type { Vector3 } from '../ecs/components/TransformComponent';
 import { OPENCLAW_AGENT, type OpenClawAgentComponent } from './OpenClawAgentComponent';
 import { AgentDecisionType } from './types';
 import type { AgentDecision } from './types';
@@ -41,6 +37,8 @@ import {
   getCulturalProductionBonus,
 } from './ArtEconomy';
 import { ResourceType } from '../types/resources';
+import { BuildingType } from '../types/buildings';
+import { BUILDING_DEFS } from '../content/BuildingDefs';
 import type { EventBus } from '../events/EventBus';
 import type { GameEventMap } from '../events/GameEvents';
 import type { TimeSystem } from '../systems/TimeSystem';
@@ -215,15 +213,6 @@ export class OpenClawTownSystem extends System {
   ): void {
     if (!decision.buildingType || !decision.position || !this.callbacks) return;
 
-    // Deduct building cost from agent's own resource pool
-    const buildingCost = this.getBuildingCost(decision.buildingType);
-    for (const [resource, amount] of Object.entries(buildingCost)) {
-      if (amount && amount > 0) {
-        agent.resources[resource as ResourceType] =
-          (agent.resources[resource as ResourceType] ?? 0) - amount;
-      }
-    }
-
     const position: Vector3 = {
       x: decision.position.x,
       y: 0,
@@ -237,6 +226,17 @@ export class OpenClawTownSystem extends System {
     );
 
     if (buildingEntityId != null) {
+      // Deduct building cost from agent's own resource pool only on success
+      const def = BUILDING_DEFS[decision.buildingType as BuildingType];
+      if (def) {
+        for (const [resource, amount] of Object.entries(def.cost)) {
+          if (amount && amount > 0) {
+            agent.resources[resource as ResourceType] =
+              (agent.resources[resource as ResourceType] ?? 0) - amount;
+          }
+        }
+      }
+
       // Track the building
       agent.buildingEntities.push(buildingEntityId);
       agent.totalBuildingsBuilt++;
@@ -483,20 +483,6 @@ export class OpenClawTownSystem extends System {
           }
         }
       }
-    }
-  }
-
-  /**
-   * Get the resource cost for a building type.
-   */
-  private getBuildingCost(type: string): Partial<Record<ResourceType, number>> {
-    switch (type) {
-      case 'House': return { [ResourceType.Wood]: 10, [ResourceType.Stone]: 5 };
-      case 'StorageBarn': return { [ResourceType.Wood]: 15 };
-      case 'WoodcutterHut': return { [ResourceType.Wood]: 5 };
-      case 'FarmField': return { [ResourceType.Wood]: 5 };
-      case 'Quarry': return { [ResourceType.Wood]: 10 };
-      default: return {};
     }
   }
 

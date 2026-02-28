@@ -289,11 +289,12 @@ export class OpenClawWorldManager {
     const evolutionSystem = this.agentEvolutionSystems.get(agentEntityId);
     if (!evolutionSystem) return;
 
-    // Place building through GameWorld
+    // Place starting town center — uses agent placement to avoid deducting
+    // from the global resource pool (this is a free starting building)
     const position: Vector3 = { x, y: 0, z };
     position.y = this.gameWorld.terrainMesh.getHeightAt(x, z);
 
-    const buildingId = this.gameWorld.placeBuilding(BuildingType.StorageBarn, position);
+    const buildingId = this.gameWorld.placeBuildingForAgent(BuildingType.StorageBarn, position);
     if (buildingId != null) {
       agent.buildingEntities.push(buildingId);
       agent.totalBuildingsBuilt++;
