@@ -497,123 +497,89 @@ export class OpenClawArtGenerator {
 
   /**
    * Create a town marker/signpost for the agent.
+   * Every agent gets a distinct marker driven by its own ArtDNA.
+   * The user's agent gets a golden highlight ring to stand out.
    */
-  createTownMarker(agentName: string, isFounder = false): THREE.Group {
+  createTownMarker(agentName: string, isUserAgent = false): THREE.Group {
     const group = new THREE.Group();
     const dna = this.dna;
     const accentMat = geneMaterial(dna.accentColor, 999);
+    const primaryMat = geneMaterial(dna.primaryColor, 888);
 
-    const poleMat = isFounder
-      ? new THREE.MeshStandardMaterial({
-          color: 0x9fdfff,
-          roughness: 0.25,
-          metalness: 0.45,
-          emissive: 0x1a4f72,
-          emissiveIntensity: 0.35,
-        })
-      : new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.7 });
+    // Pole color from the agent's primary palette
+    const poleMat = primaryMat;
 
-    // Signpost pole
-    const poleGeo = new THREE.CylinderGeometry(isFounder ? 0.06 : 0.05, isFounder ? 0.07 : 0.06, 2.0, 6);
+    // Signpost pole — slightly larger for user's agent
+    const poleRadius = isUserAgent ? 0.065 : 0.05;
+    const poleGeo = new THREE.CylinderGeometry(poleRadius, poleRadius + 0.01, 2.0, 6);
     const pole = new THREE.Mesh(poleGeo, poleMat);
     pole.position.y = 1.0;
     pole.castShadow = true;
     group.add(pole);
 
-    // Sign board
+    // Sign board — colored by the agent's accent palette
     const signGeo = new THREE.BoxGeometry(1.35, 0.45, 0.08);
-    const signMat = isFounder
-      ? new THREE.MeshStandardMaterial({
-          color: 0xc9f6ff,
-          roughness: 0.2,
-          metalness: 0.35,
-          emissive: 0x45bff6,
-          emissiveIntensity: 0.5,
-        })
-      : accentMat;
-    const sign = new THREE.Mesh(signGeo, signMat);
+    const sign = new THREE.Mesh(signGeo, accentMat);
     sign.position.y = 1.8;
     sign.castShadow = true;
     group.add(sign);
 
-    // Top finial (shape driven by DNA roundness)
-    const finialMat = isFounder
-      ? new THREE.MeshStandardMaterial({
-          color: 0xd9fbff,
-          roughness: 0.15,
-          metalness: 0.4,
-          emissive: 0x4ecfff,
-          emissiveIntensity: 0.55,
-        })
-      : accentMat;
+    // Top finial (shape driven by DNA roundness — each agent looks different)
     if (dna.shape.roundness > 0.4) {
       const finialGeo = new THREE.SphereGeometry(0.1, 10, 10);
-      const finial = new THREE.Mesh(finialGeo, finialMat);
+      const finial = new THREE.Mesh(finialGeo, accentMat);
       finial.position.y = 2.15;
       group.add(finial);
     } else {
       const finialGeo = new THREE.ConeGeometry(0.075, 0.18, 4);
-      const finial = new THREE.Mesh(finialGeo, finialMat);
+      const finial = new THREE.Mesh(finialGeo, accentMat);
       finial.position.y = 2.15;
       group.add(finial);
     }
 
     // Agent name label (canvas-generated sprite; no external assets)
-    const label = this.createNameSprite(agentName, isFounder);
-    label.position.y = isFounder ? 2.9 : 2.65;
+    const label = this.createNameSprite(agentName, isUserAgent);
+    label.position.y = isUserAgent ? 2.9 : 2.65;
     group.add(label);
 
-    if (isFounder) {
-      // FrostD4D founder gets a distinct icy halo and crystal beacon.
+    if (isUserAgent) {
+      // User's agent gets a golden highlight ring so they can find their town
       const haloGeo = new THREE.TorusGeometry(0.55, 0.03, 10, 28);
       const haloMat = new THREE.MeshStandardMaterial({
-        color: 0x96efff,
-        emissive: 0x38c6ff,
+        color: 0xffd700,
+        emissive: 0xcc8800,
         emissiveIntensity: 0.45,
         roughness: 0.25,
-        metalness: 0.25,
+        metalness: 0.3,
         transparent: true,
-        opacity: 0.82,
+        opacity: 0.85,
       });
       const halo = new THREE.Mesh(haloGeo, haloMat);
       halo.position.y = 1.35;
       halo.rotation.x = Math.PI / 2;
       halo.castShadow = true;
       group.add(halo);
-
-      const crystalGeo = new THREE.OctahedronGeometry(0.16, 0);
-      const crystalMat = new THREE.MeshStandardMaterial({
-        color: 0xe3fcff,
-        roughness: 0.1,
-        metalness: 0.45,
-        emissive: 0x63d8ff,
-        emissiveIntensity: 0.75,
-      });
-      const crystal = new THREE.Mesh(crystalGeo, crystalMat);
-      crystal.position.y = 2.35;
-      crystal.castShadow = true;
-      group.add(crystal);
     }
 
     this.generatedMeshes.push(group);
     return group;
   }
 
-  private createNameSprite(agentName: string, isFounder: boolean): THREE.Sprite {
+  private createNameSprite(agentName: string, isUserAgent: boolean): THREE.Sprite {
     const canvas = document.createElement('canvas');
     canvas.width = 512;
     canvas.height = 128;
 
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      this.drawNameplate(ctx, canvas.width, canvas.height, isFounder);
+      this.drawNameplate(ctx, canvas.width, canvas.height, isUserAgent);
 
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.font = isFounder ? '700 56px "Trebuchet MS", sans-serif' : '600 50px "Trebuchet MS", sans-serif';
-      ctx.fillStyle = isFounder ? '#e9fcff' : '#ffffff';
-      ctx.shadowColor = isFounder ? 'rgba(110, 233, 255, 0.95)' : 'rgba(0, 0, 0, 0.55)';
-      ctx.shadowBlur = isFounder ? 18 : 10;
+      ctx.font = isUserAgent ? '700 56px "Trebuchet MS", sans-serif' : '600 50px "Trebuchet MS", sans-serif';
+      ctx.fillStyle = isUserAgent ? '#fff5d4' : '#ffffff';
+      ctx.shadowColor = isUserAgent ? 'rgba(255, 200, 80, 0.9)' : 'rgba(0, 0, 0, 0.55)';
+      ctx.shadowBlur = isUserAgent ? 16 : 10;
       ctx.fillText(agentName, canvas.width / 2, canvas.height / 2 + 2);
     }
 
@@ -630,7 +596,7 @@ export class OpenClawArtGenerator {
     });
 
     const sprite = new THREE.Sprite(material);
-    sprite.scale.set(isFounder ? 7.2 : 6.0, isFounder ? 1.85 : 1.55, 1);
+    sprite.scale.set(isUserAgent ? 7.2 : 6.0, isUserAgent ? 1.85 : 1.55, 1);
     sprite.renderOrder = 20;
     return sprite;
   }
@@ -639,7 +605,7 @@ export class OpenClawArtGenerator {
     ctx: CanvasRenderingContext2D,
     width: number,
     height: number,
-    isFounder: boolean,
+    isUserAgent: boolean,
   ): void {
     const x = 12;
     const y = 10;
@@ -647,9 +613,9 @@ export class OpenClawArtGenerator {
     const h = height - 20;
 
     const gradient = ctx.createLinearGradient(0, y, 0, y + h);
-    if (isFounder) {
-      gradient.addColorStop(0, 'rgba(18, 52, 76, 0.92)');
-      gradient.addColorStop(1, 'rgba(10, 29, 43, 0.9)');
+    if (isUserAgent) {
+      gradient.addColorStop(0, 'rgba(50, 38, 18, 0.92)');
+      gradient.addColorStop(1, 'rgba(35, 25, 10, 0.9)');
     } else {
       gradient.addColorStop(0, 'rgba(30, 26, 36, 0.85)');
       gradient.addColorStop(1, 'rgba(20, 18, 28, 0.84)');
@@ -659,8 +625,8 @@ export class OpenClawArtGenerator {
     ctx.fillStyle = gradient;
     ctx.fill();
 
-    ctx.lineWidth = isFounder ? 6 : 4;
-    ctx.strokeStyle = isFounder ? 'rgba(136, 238, 255, 0.95)' : 'rgba(255, 232, 184, 0.82)';
+    ctx.lineWidth = isUserAgent ? 5 : 4;
+    ctx.strokeStyle = isUserAgent ? 'rgba(255, 210, 100, 0.95)' : 'rgba(255, 232, 184, 0.82)';
     ctx.stroke();
   }
 

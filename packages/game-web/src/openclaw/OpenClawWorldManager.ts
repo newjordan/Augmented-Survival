@@ -38,15 +38,13 @@ import {
 import type { GameWorld } from '../game/GameWorld';
 import { AssetEvolutionSystem } from './AssetEvolutionSystem';
 
-/** Names for randomly generated agents */
+/** Names for randomly generated AI agents */
 const AGENT_NAMES = [
   'Thornhollow', 'Mistpeak', 'Ironridge', 'Sunvale', 'Frostmere',
   'Embercrest', 'Stonewatch', 'Windshear', 'Ashgrove', 'Dewpoint',
   'Shadowfen', 'Brightmoor', 'Copperdale', 'Silverglen', 'Goldhaven',
   'Mossveil', 'Stormhaven', 'Cloudspire', 'Duskhollow', 'Dawnfield',
 ];
-
-export const FROST_FOUNDER_NAME = 'FrostD4D';
 
 /** Architectural styles to randomly assign */
 const STYLES = Object.values(ArchitecturalStyle);
@@ -68,7 +66,10 @@ export class OpenClawWorldManager {
   private agentEntities: EntityId[] = [];
   private roadMeshes: THREE.Mesh[] = [];
   private markerMeshes: THREE.Object3D[] = [];
-  private frostFounderEntityId: EntityId | null = null;
+  /** The first spawned agent — belongs to the user */
+  private userAgentEntityId: EntityId | null = null;
+  /** User-chosen name for their town (set via promptUserTownName) */
+  private userTownName: string | null = null;
 
   constructor(gameWorld: GameWorld) {
     this.gameWorld = gameWorld;
@@ -97,6 +98,8 @@ export class OpenClawWorldManager {
 
   /**
    * Spawn multiple autonomous agents at spread-out locations on the map.
+   * The first agent is the user's — they'll be prompted for a town name.
+   * Remaining agents are AI-controlled with random names.
    */
   spawnAgents(count: number, mapHalfSize = 128): void {
     // Place agents in a circle around the map, away from center
@@ -116,13 +119,105 @@ export class OpenClawWorldManager {
   }
 
   /**
+   * Prompt the user for their town name. Call before spawnAgents
+   * so the first agent gets the user's chosen name.
+   * Returns a promise that resolves when the user responds.
+   */
+  async promptUserTownName(): Promise<string> {
+    return new Promise<string>((resolve) => {
+      // Create modal overlay
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position: fixed; inset: 0; z-index: 10000;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex; align-items: center; justify-content: center;
+        font-family: 'Trebuchet MS', sans-serif;
+      `;
+
+      const dialog = document.createElement('div');
+      dialog.style.cssText = `
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        border: 2px solid rgba(255, 220, 150, 0.6);
+        border-radius: 12px; padding: 32px 40px;
+        text-align: center; min-width: 360px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      `;
+
+      const title = document.createElement('h2');
+      title.textContent = 'Name Your Town';
+      title.style.cssText = `
+        color: #ffe8b4; margin: 0 0 8px 0; font-size: 24px;
+        text-shadow: 0 2px 8px rgba(255, 200, 80, 0.3);
+      `;
+
+      const subtitle = document.createElement('p');
+      subtitle.textContent = 'Your agent will build and evolve this town autonomously.';
+      subtitle.style.cssText = 'color: #a0a8c0; margin: 0 0 20px 0; font-size: 14px;';
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'Enter town name...';
+      input.maxLength = 20;
+      input.style.cssText = `
+        width: 100%; box-sizing: border-box;
+        padding: 10px 14px; font-size: 18px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 220, 150, 0.35);
+        border-radius: 6px; color: #fff;
+        outline: none; font-family: inherit;
+      `;
+
+      const button = document.createElement('button');
+      button.textContent = 'Found Town';
+      button.style.cssText = `
+        margin-top: 16px; padding: 10px 28px;
+        font-size: 16px; font-weight: 600;
+        background: linear-gradient(135deg, #d4a03c 0%, #b8860b 100%);
+        color: #1a1a2e; border: none; border-radius: 6px;
+        cursor: pointer; font-family: inherit;
+        transition: transform 0.1s;
+      `;
+      button.onmouseenter = () => { button.style.transform = 'scale(1.04)'; };
+      button.onmouseleave = () => { button.style.transform = 'scale(1)'; };
+
+      const submit = () => {
+        const name = input.value.trim();
+        const finalName = name.length > 0 ? name : AGENT_NAMES[Math.floor(Math.random() * AGENT_NAMES.length)];
+        this.userTownName = finalName;
+        overlay.remove();
+        resolve(finalName);
+      };
+
+      button.addEventListener('click', submit);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') submit();
+      });
+
+      dialog.appendChild(title);
+      dialog.appendChild(subtitle);
+      dialog.appendChild(input);
+      dialog.appendChild(button);
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+
+      // Focus input after render
+      requestAnimationFrame(() => input.focus());
+    });
+  }
+
+  /**
    * Spawn a single autonomous agent at a specific location.
    */
   spawnAgent(centerX: number, centerZ: number, seed: number, index: number): EntityId {
     // Generate unique personality
     const rng = this.seededRandom(seed);
-    const isFounder = this.frostFounderEntityId == null;
-    const name = isFounder ? FROST_FOUNDER_NAME : AGENT_NAMES[index % AGENT_NAMES.length];
+    const isUserAgent = this.userAgentEntityId == null;
+
+    // First agent uses the user's chosen name; others get random names
+    const name = isUserAgent && this.userTownName
+      ? this.userTownName
+      : AGENT_NAMES[index % AGENT_NAMES.length];
+
     const style = STYLES[Math.floor(rng() * STYLES.length)];
     const priority = PRIORITIES[Math.floor(rng() * PRIORITIES.length)];
     const secondaryPriority = PRIORITIES[Math.floor(rng() * PRIORITIES.length)];
@@ -140,8 +235,8 @@ export class OpenClawWorldManager {
 
     this.gameWorld.world.addComponent(agentEntityId, OPENCLAW_AGENT, agentComponent);
 
-    if (isFounder) {
-      this.frostFounderEntityId = agentEntityId;
+    if (isUserAgent) {
+      this.userAgentEntityId = agentEntityId;
     }
 
     // Create per-agent evolution system
@@ -162,8 +257,8 @@ export class OpenClawWorldManager {
       agentComponent.citizenEntities.push(citizenId);
     }
 
-    // Create town marker
-    const marker = evolutionSystem.createTownMarkerMesh(name, isFounder);
+    // Create town marker — user's agent gets highlighted, all agents get name labels
+    const marker = evolutionSystem.createTownMarkerMesh(name, isUserAgent);
     marker.position.set(centerX + 4, this.gameWorld.terrainMesh.getHeightAt(centerX + 4, centerZ - 3), centerZ - 3);
     this.scene.add(marker);
     this.markerMeshes.push(marker);
@@ -307,18 +402,30 @@ export class OpenClawWorldManager {
   }
 
   /**
-   * Get FrostD4D's town center for camera focus affordances.
+   * Get the user's agent town center for camera focus.
    */
-  getFrostFounderTownCenter(): THREE.Vector3 | null {
-    if (this.frostFounderEntityId == null) return null;
+  getUserAgentTownCenter(): THREE.Vector3 | null {
+    if (this.userAgentEntityId == null) return null;
 
-    const founder = this.gameWorld.world.getComponent<OpenClawAgentComponent>(
-      this.frostFounderEntityId,
+    const agent = this.gameWorld.world.getComponent<OpenClawAgentComponent>(
+      this.userAgentEntityId,
       OPENCLAW_AGENT,
     );
-    if (!founder) return null;
+    if (!agent) return null;
 
-    return new THREE.Vector3(founder.townPlan.centerX, 0, founder.townPlan.centerZ);
+    return new THREE.Vector3(agent.townPlan.centerX, 0, agent.townPlan.centerZ);
+  }
+
+  /**
+   * Get the user's agent name.
+   */
+  getUserAgentName(): string | null {
+    if (this.userAgentEntityId == null) return null;
+    const agent = this.gameWorld.world.getComponent<OpenClawAgentComponent>(
+      this.userAgentEntityId,
+      OPENCLAW_AGENT,
+    );
+    return agent?.name ?? null;
   }
 
   /**
@@ -371,6 +478,6 @@ export class OpenClawWorldManager {
     }
     this.agentEvolutionSystems.clear();
 
-    this.frostFounderEntityId = null;
+    this.userAgentEntityId = null;
   }
 }

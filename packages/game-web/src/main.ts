@@ -96,7 +96,10 @@ class GameApp {
 
     // Initialize OpenClaw autonomous agents
     this.openClawManager = new OpenClawWorldManager(this.gameWorld);
-    this.openClawManager.spawnAgents(3);
+    this.openClawManager.promptUserTownName().then((townName) => {
+      this.openClawManager.spawnAgents(3);
+      console.log(`[Augmented Survival] Town "${townName}" founded. Press F to focus camera on your town.`);
+    });
 
     // Expose to window for UI layer access
     (window as unknown as Record<string, unknown>).__gameApp = this;
@@ -107,7 +110,6 @@ class GameApp {
     this.onResize();
 
     console.log('[Augmented Survival] Game initialized with OpenClaw autonomous agents');
-    console.log('[Augmented Survival] Press F to focus camera on FrostD4D');
   }
 
   // Public API for UI
@@ -182,10 +184,10 @@ class GameApp {
       return;
     }
 
-    const frostTownCenter = this.openClawManager.getFrostFounderTownCenter();
-    if (!frostTownCenter) return;
+    const userTownCenter = this.openClawManager.getUserAgentTownCenter();
+    if (!userTownCenter) return;
 
-    this.cameraController.panTo(frostTownCenter, 1.0);
+    this.cameraController.panTo(userTownCenter, 1.0);
   };
 
   dispose(): void {
