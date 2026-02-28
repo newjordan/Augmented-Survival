@@ -165,3 +165,45 @@ export type { IMilitarySystem } from './stubs/MilitarySystem';
 export { MilitarySystemStub } from './stubs/MilitarySystem';
 export type { IExplorationSystem } from './stubs/ExplorationSystem';
 export { ExplorationSystemStub } from './stubs/ExplorationSystem';
+
+// OpenClaw Autonomous Towns — Agent-driven town building, art evolution, and collaboration
+export type {
+  ColorGene,
+  ShapeGene,
+  DecorationGene,
+  ArtDNA,
+  TownPlot,
+  RoadSegment,
+  TownPlan,
+  InteractionMemory,
+  TradeDesire,
+  ArtMemory,
+  AgentDecision,
+  OpenClawAgentComponent,
+  OpenClawTownCallbacks,
+} from './openclaw';
+export {
+  AgentDecisionType,
+  ArchitecturalStyle,
+  AgentPriority,
+  SocialDisposition,
+  OPENCLAW_AGENT,
+  createOpenClawAgent,
+  generateRandomArtDNA,
+  mutateArtDNA,
+  crossoverArtDNA,
+  evaluateArtFitness,
+  describeMutation,
+  planExpansionRing,
+  planRoadsForPlot,
+  makeStrategicDecision,
+  areAgentsNearby,
+  calculateTrust,
+  calculateTradeDesires,
+  attemptTrade,
+  attemptArtCrossover,
+  recordInteraction,
+  wouldCollaborate,
+  calculateTownScore,
+  OpenClawTownSystem,
+} from './openclaw';

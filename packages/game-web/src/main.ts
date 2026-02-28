@@ -13,6 +13,7 @@ import { GameUI } from './ui/GameUI.js';
 import { VILLAGER_SIDEBAR_SELECT_EVENT } from './ui/VillagerSidebar.js';
 import { CITIZEN, TRANSFORM } from '@augmented-survival/game-core';
 import type { EntityId, TransformComponent } from '@augmented-survival/game-core';
+import { OpenClawWorldManager } from './openclaw/OpenClawWorldManager.js';
 
 class GameApp {
   private gameRenderer: GameRenderer;
@@ -21,6 +22,7 @@ class GameApp {
   private selectionManager: SelectionManager;
   private buildingGhost: BuildingGhostPreview;
   private gameUI: GameUI;
+  private openClawManager: OpenClawWorldManager;
   private container: HTMLElement;
   private lastTime = 0;
   private animationFrameId = 0;
@@ -92,6 +94,10 @@ class GameApp {
       this.gameUI.hideSelection();
     });
 
+    // Initialize OpenClaw autonomous agents
+    this.openClawManager = new OpenClawWorldManager(this.gameWorld);
+    this.openClawManager.spawnAgents(3);
+
     // Expose to window for UI layer access
     (window as unknown as Record<string, unknown>).__gameApp = this;
 
@@ -99,7 +105,7 @@ class GameApp {
     window.addEventListener('resize', this.onResize);
     this.onResize();
 
-    console.log('[Augmented Survival] Game initialized');
+    console.log('[Augmented Survival] Game initialized with OpenClaw autonomous agents');
   }
 
   // Public API for UI
@@ -108,6 +114,7 @@ class GameApp {
   getBuildingGhost(): BuildingGhostPreview { return this.buildingGhost; }
   getCameraController(): RTSCameraController { return this.cameraController; }
   getRenderer(): GameRenderer { return this.gameRenderer; }
+  getOpenClawManager(): OpenClawWorldManager { return this.openClawManager; }
 
   /** Start the render loop */
   start(): void {
@@ -143,6 +150,9 @@ class GameApp {
     // Update game simulation and sync meshes
     this.gameWorld.update(dt);
 
+    // Update OpenClaw agent visual transitions
+    this.openClawManager.update(dt);
+
     // Update selection ring position and command markers
     this.selectionManager.update(dt);
 
@@ -163,6 +173,7 @@ class GameApp {
     window.removeEventListener('resize', this.onResize);
     this.container.removeEventListener('click', this.onPlacementClick, true);
     this.container.removeEventListener(VILLAGER_SIDEBAR_SELECT_EVENT, this.onSidebarSelect as EventListener);
+    this.openClawManager.dispose();
     this.gameUI.dispose();
     this.selectionManager.dispose();
     this.buildingGhost.dispose();
