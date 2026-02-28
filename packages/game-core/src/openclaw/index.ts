@@ -46,6 +46,23 @@ export {
   makeStrategicDecision,
 } from './TownPlanner';
 
+// Art Economy — resource costs, cultural value, economic bonuses
+export {
+  getArtEvolutionCost,
+  getArtCrossoverCost,
+  getArtCommissionCost,
+  calculateCulturalValue,
+  getCulturalHappinessBonus,
+  getCulturalProductionBonus,
+  getCulturalPopulationBonus,
+  getCulturalTradeBonus,
+  shouldInvestInArt,
+  chooseArtIntensity,
+  calculateArtROI,
+  canAffordArtCost,
+} from './ArtEconomy';
+export type { ArtEvolutionCost, CommissionResult } from './ArtEconomy';
+
 // Agent Collaboration
 export {
   areAgentsNearby,

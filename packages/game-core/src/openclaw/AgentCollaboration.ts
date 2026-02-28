@@ -14,6 +14,7 @@
 import type { OpenClawAgentComponent } from './OpenClawAgentComponent';
 import type { InteractionMemory, TradeDesire, ArtDNA } from './types';
 import { crossoverArtDNA } from './ArtDNA';
+import { getCulturalTradeBonus } from './ArtEconomy';
 import { ResourceType } from '../types/resources';
 
 /** Distance threshold for agents to discover each other */
@@ -70,6 +71,9 @@ export function calculateTrust(
       trust -= 0.3;
       break;
   }
+
+  // Cultural towns are more attractive trade partners
+  trust += getCulturalTradeBonus(agent.culturalValue ?? 0);
 
   return Math.max(-1, Math.min(1, trust));
 }
@@ -217,7 +221,16 @@ export function wouldCollaborate(
 
 /**
  * Calculate a "town score" for competitive comparison.
- * Used by competitive agents to evaluate their standing.
+ * Cultural value is now the heaviest scoring component — towns that invest
+ * in art dramatically outscale those that only build.
+ *
+ * Scoring breakdown:
+ *   Buildings:  10 pts each (infrastructure)
+ *   Population: 15 pts each (citizens)
+ *   Art gen:     5 pts each (creativity)
+ *   Culture:     3 pts per cultural value point (the big multiplier)
+ *   Satisfaction: 20 pts max (happiness)
+ *   Crossovers:  10 pts each (cultural exchange prestige)
  */
 export function calculateTownScore(agent: OpenClawAgentComponent): number {
   let score = 0;
@@ -231,8 +244,17 @@ export function calculateTownScore(agent: OpenClawAgentComponent): number {
   // Art evolution contributes (creativity bonus)
   score += agent.artDNA.generation * 5;
 
+  // Cultural value is the heavyweight — this is the payoff for art investment
+  score += (agent.culturalValue ?? 0) * 3;
+
+  // Art crossovers (cultural exchange) give prestige
+  score += (agent.crossoversCompleted ?? 0) * 10;
+
+  // Commissions completed (being a sought-after artist)
+  score += (agent.commissionsCompleted ?? 0) * 8;
+
   // Satisfaction bonus
   score += agent.satisfaction * 20;
 
-  return score;
+  return Math.round(score);
 }

@@ -80,6 +80,18 @@ export interface OpenClawAgentComponent {
 
   /** Agent "satisfaction" with current town (0-1, affects mutation rate) */
   satisfaction: number;
+
+  /** Total resources invested in art evolution (Gold equivalent) */
+  artInvestment: number;
+
+  /** Cached cultural value (updated each tick) */
+  culturalValue: number;
+
+  /** Number of art commissions completed as the artist */
+  commissionsCompleted: number;
+
+  /** Number of art crossovers with other agents */
+  crossoversCompleted: number;
 }
 
 export const OPENCLAW_AGENT = 'OpenClawAgent' as const;
@@ -123,5 +135,9 @@ export function createOpenClawAgent(
     artEvolutionInterval: 60 + (seed % 60), // 60-120 seconds between art evolutions
     totalBuildingsBuilt: 0,
     satisfaction: 0.5,
+    artInvestment: 0,
+    culturalValue: 0,
+    commissionsCompleted: 0,
+    crossoversCompleted: 0,
   };
 }

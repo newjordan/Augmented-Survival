@@ -31,6 +31,15 @@ import {
   recordInteraction,
   calculateTownScore,
 } from './AgentCollaboration';
+import {
+  getArtEvolutionCost,
+  getArtCrossoverCost,
+  canAffordArtCost,
+  chooseArtIntensity,
+  calculateCulturalValue,
+  getCulturalHappinessBonus,
+  getCulturalProductionBonus,
+} from './ArtEconomy';
 import { ResourceType } from '../types/resources';
 import type { EventBus } from '../events/EventBus';
 import type { GameEventMap } from '../events/GameEvents';
@@ -277,20 +286,49 @@ export class OpenClawTownSystem extends System {
 
   /**
    * Evolve the agent's art DNA through mutation.
+   * Art evolution now COSTS RESOURCES — this is the core art-economy loop.
+   *
+   * The agent chooses mutation intensity based on what it can afford:
+   *   Minor tweak (< 0.3): 2 Gold
+   *   Standard (0.3-0.7): 5 Gold + 3 Wood
+   *   Major overhaul (> 0.7): 8 Gold + 5 Wood + 3 Stone
+   *
+   * Investment is tracked and accumulates cultural value, which in turn
+   * boosts citizen happiness, productivity, and population growth.
    */
   private evolveArt(
     _world: World,
     entityId: EntityId,
     agent: OpenClawAgentComponent,
   ): void {
+    // Get available resources to determine what we can afford
+    const resources: Partial<Record<ResourceType, number>> = {};
+    for (const rt of Object.values(ResourceType)) {
+      resources[rt] = this.resourceStore.getResource(rt);
+    }
+
+    // Choose intensity based on what we can afford and strategic needs
+    const intensity = chooseArtIntensity(agent, resources);
+    if (intensity <= 0) return; // Can't afford any art evolution
+
+    // Calculate and check cost
+    const cost = getArtEvolutionCost(intensity);
+    if (!canAffordArtCost(cost.resources, resources)) return;
+
+    // Deduct resources — art costs real materials
+    for (const [resource, amount] of Object.entries(cost.resources)) {
+      if (amount && amount > 0) {
+        const current = this.resourceStore.getResource(resource as ResourceType);
+        this.resourceStore.setResource(resource as ResourceType, current - amount);
+      }
+    }
+
+    // Track the investment (in Gold-equivalent units)
+    const investmentValue = Object.values(cost.resources).reduce((sum, v) => sum + (v ?? 0), 0);
+    agent.artInvestment += investmentValue;
+
+    // Now mutate
     const oldDNA = agent.artDNA;
-
-    // Mutation intensity based on satisfaction:
-    // Low satisfaction = more dramatic mutations (searching for better style)
-    // High satisfaction = subtle refinements
-    const intensity = 1.0 - agent.satisfaction * 0.7;
-
-    // Mutate
     const seed = agent.seed + agent.artDNA.generation * 7919 + Math.floor(this.gameTime);
     const newDNA = mutateArtDNA(oldDNA, intensity, seed);
 
@@ -321,6 +359,9 @@ export class OpenClawTownSystem extends System {
     if (accepted) {
       agent.artDNA = newDNA;
 
+      // Update cultural value immediately after successful evolution
+      agent.culturalValue = calculateCulturalValue(agent);
+
       // Notify rendering layer
       if (this.callbacks) {
         this.callbacks.onArtEvolved(entityId, agent);
@@ -330,18 +371,26 @@ export class OpenClawTownSystem extends System {
 
   /**
    * Update agent satisfaction based on current town state.
+   * Cultural value now plays a major role — towns that invest in art
+   * have significantly happier citizens.
    */
   private updateSatisfaction(agent: OpenClawAgentComponent): void {
-    let satisfaction = 0.3; // Base
+    let satisfaction = 0.2; // Base (slightly lower to make culture matter more)
 
     // More buildings = more satisfaction
-    satisfaction += Math.min(0.3, agent.totalBuildingsBuilt * 0.03);
+    satisfaction += Math.min(0.2, agent.totalBuildingsBuilt * 0.02);
 
     // More citizens = more satisfaction
-    satisfaction += Math.min(0.2, agent.citizenEntities.length * 0.04);
+    satisfaction += Math.min(0.15, agent.citizenEntities.length * 0.03);
 
-    // Art fitness contributes
-    satisfaction += agent.artDNA.fitnessScore * 0.2;
+    // Art fitness contributes directly
+    satisfaction += agent.artDNA.fitnessScore * 0.15;
+
+    // Cultural value is the big satisfaction driver
+    // This is the payoff for art investment
+    agent.culturalValue = calculateCulturalValue(agent);
+    const cultureBonus = getCulturalHappinessBonus(agent.culturalValue);
+    satisfaction *= cultureBonus; // Multiplier, not additive — culture amplifies everything
 
     agent.satisfaction = Math.min(1, satisfaction);
   }
@@ -382,13 +431,42 @@ export class OpenClawTownSystem extends System {
           this.callbacks.onTradeCompleted(agentEntities[i], agentEntities[j], desc);
         }
 
-        // Try art crossover (happens rarely, requires trust)
-        const seed = Math.floor(this.gameTime * 1000) + agentEntities[i] as number;
-        const crossoverDNA = attemptArtCrossover(agentA, agentB, agentEntities[j] as number, seed);
-        if (crossoverDNA) {
-          agentA.artDNA = crossoverDNA;
-          recordInteraction(agentA, agentEntities[j] as number, 'collaboration', 'positive', this.gameTime);
-          this.callbacks.onArtEvolved(agentEntities[i], agentA);
+        // Try art crossover (happens rarely, requires trust AND resources)
+        // Cultural exchange isn't free — both agents pay materials
+        const crossoverCost = getArtCrossoverCost();
+        const canAffordCrossover =
+          canAffordArtCost(crossoverCost, resourcesA) &&
+          canAffordArtCost(crossoverCost, resourcesB);
+
+        if (canAffordCrossover) {
+          const seed = Math.floor(this.gameTime * 1000) + agentEntities[i] as number;
+          const crossoverDNA = attemptArtCrossover(agentA, agentB, agentEntities[j] as number, seed);
+          if (crossoverDNA) {
+            // Deduct crossover cost from shared resource pool
+            for (const [resource, amount] of Object.entries(crossoverCost)) {
+              if (amount && amount > 0) {
+                const current = this.resourceStore.getResource(resource as ResourceType);
+                // Both agents contribute, so deduct twice
+                this.resourceStore.setResource(resource as ResourceType, current - amount * 2);
+              }
+            }
+
+            // Track investment for both agents
+            const investmentValue = Object.values(crossoverCost).reduce((sum, v) => sum + (v ?? 0), 0);
+            agentA.artInvestment += investmentValue;
+            agentB.artInvestment += investmentValue;
+
+            // Apply crossover and track
+            agentA.artDNA = crossoverDNA;
+            agentA.crossoversCompleted++;
+            agentB.crossoversCompleted++;
+            agentA.culturalValue = calculateCulturalValue(agentA);
+            agentB.culturalValue = calculateCulturalValue(agentB);
+
+            recordInteraction(agentA, agentEntities[j] as number, 'collaboration', 'positive', this.gameTime);
+            recordInteraction(agentB, agentEntities[i] as number, 'collaboration', 'positive', this.gameTime);
+            this.callbacks.onArtEvolved(agentEntities[i], agentA);
+          }
         }
       }
     }

@@ -225,6 +225,16 @@ export interface AgentStateSnapshot {
   totalBuildingsBuilt: number;
   satisfaction: number;
   townScore: number;
+  /** Total resources invested in art (Gold-equivalent) */
+  artInvestment: number;
+  /** Cultural value score — drives happiness, productivity, and trade */
+  culturalValue: number;
+  /** Art crossovers completed with other agents */
+  crossoversCompleted: number;
+  /** Citizen happiness multiplier from culture (1.0 = baseline) */
+  culturalHappinessBonus: number;
+  /** Resource production multiplier from culture (1.0 = baseline) */
+  culturalProductionBonus: number;
 }
 
 /** Summary of another agent (limited info) */
@@ -237,13 +247,16 @@ export interface AgentSummary {
   citizenCount: number;
   artGeneration: number;
   disposition: string;
+  /** Cultural value — visible to other agents (reputation) */
+  culturalValue: number;
 }
 
 /** Game events that agents care about */
 export type GameEvent =
   | { event: 'building_placed'; buildingId: number; buildingType: string; x: number; z: number }
   | { event: 'building_completed'; buildingId: number; buildingType: string }
-  | { event: 'art_evolved'; generation: number; fitnessScore: number }
+  | { event: 'art_evolved'; generation: number; fitnessScore: number; cost: string; culturalValue: number }
+  | { event: 'art_crossover'; partnerName: string; newGeneration: number; culturalValue: number }
   | { event: 'trade_completed'; partnerName: string; description: string }
   | { event: 'citizen_spawned'; citizenId: number }
   | { event: 'territory_expanded'; ring: number; newPlots: number }

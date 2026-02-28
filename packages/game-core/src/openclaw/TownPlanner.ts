@@ -21,6 +21,7 @@ import type { ArchitecturalStyle, AgentPriority, TownPlan, TownPlot, RoadSegment
 import type { OpenClawAgentComponent } from './OpenClawAgentComponent';
 import { AgentDecisionType } from './types';
 import type { AgentDecision } from './types';
+import { shouldInvestInArt, getArtEvolutionCost, canAffordArtCost } from './ArtEconomy';
 
 /** Spacing between buildings for each style */
 const STYLE_SPACING: Record<ArchitecturalStyle, number> = {
@@ -272,6 +273,12 @@ export function planRoadsForPlot(plan: TownPlan, plot: TownPlot): RoadSegment[] 
 /**
  * Make the next strategic decision for the agent.
  * Evaluates current state and returns what the agent should do.
+ *
+ * Art investment is now a real strategic choice competing with building:
+ * - Aesthetics agents prioritize art over most buildings
+ * - All agents consider art when they have surplus Gold
+ * - Low-culture towns get nudged toward investing
+ * - The build-vs-art tension is the core strategic loop
  */
 export function makeStrategicDecision(
   agent: OpenClawAgentComponent,
@@ -281,6 +288,7 @@ export function makeStrategicDecision(
   const wood = availableResources[ResourceType.Wood] ?? 0;
   const stone = availableResources[ResourceType.Stone] ?? 0;
   const food = availableResources[ResourceType.Food] ?? 0;
+  const gold = availableResources[ResourceType.Gold] ?? 0;
 
   // Check if we have unbuilt plots
   const unbuiltPlots = agent.townPlan.plots
@@ -294,6 +302,44 @@ export function makeStrategicDecision(
       priority: 80,
       reason: `No unbuilt plots remaining, expanding to ring ${agent.townPlan.expansionRing + 1}`,
     };
+  }
+
+  // ── Art vs. Building Decision ──
+  // This is the core strategic tension. Art costs Gold (+ sometimes Wood/Stone)
+  // but generates cultural value → happiness → productivity → more resources.
+  // Building is immediate utility. Art is long-term investment.
+  const wantsToInvest = shouldInvestInArt(agent, availableResources);
+
+  if (wantsToInvest) {
+    // Calculate art priority based on personality and cultural deficit
+    let artPriority = 40; // Base priority for art
+
+    // Aesthetics agents strongly prefer art
+    if (agent.priority === 'Aesthetics') artPriority += 30;
+
+    // Low culture relative to town size → invest more
+    const expectedCulture = agent.totalBuildingsBuilt * 1.5;
+    if (agent.culturalValue < expectedCulture) artPriority += 15;
+
+    // Low satisfaction makes art more appealing (agents seek change)
+    if (agent.satisfaction < 0.4) artPriority += 10;
+
+    // Surplus gold makes art very tempting
+    if (gold > 15) artPriority += 10;
+
+    // Find highest priority building we can afford (for comparison)
+    const bestBuildable = unbuiltPlots.find(p => canAffordBuilding(p.buildingType, wood, stone));
+
+    // If art priority beats the best available building, evolve art
+    if (!bestBuildable || artPriority > bestBuildable.priority) {
+      const artCost = getArtEvolutionCost(gold >= 8 ? 0.7 : gold >= 5 ? 0.5 : 0.2);
+      return {
+        type: AgentDecisionType.EvolveArt,
+        priority: artPriority,
+        reason: `Investing in art (${artCost.tier} — ${artCost.description}). ` +
+          `Cultural value: ${agent.culturalValue.toFixed(1)}, gen ${agent.artDNA.generation}`,
+      };
+    }
   }
 
   // Find the highest priority plot we can afford
@@ -310,21 +356,21 @@ export function makeStrategicDecision(
     }
   }
 
+  // Can't afford buildings — maybe we can still invest in art (cheap tier)
+  if (gold >= 2 && agent.artEvolutionTimer <= 0) {
+    return {
+      type: AgentDecisionType.EvolveArt,
+      priority: 35,
+      reason: `Can't afford buildings — investing spare Gold in minor art refinement (gen ${agent.artDNA.generation})`,
+    };
+  }
+
   // Can't afford anything — focus on resource gathering (assign jobs)
   if (wood < 10 || stone < 5) {
     return {
       type: AgentDecisionType.AssignJobs,
       priority: 60,
-      reason: `Low resources (wood: ${wood}, stone: ${stone}) — focusing on gathering`,
-    };
-  }
-
-  // Check if art evolution is due
-  if (agent.artEvolutionTimer <= 0) {
-    return {
-      type: AgentDecisionType.EvolveArt,
-      priority: 30,
-      reason: `Art evolution cycle — generation ${agent.artDNA.generation}`,
+      reason: `Low resources (wood: ${wood}, stone: ${stone}, gold: ${gold}) — focusing on gathering`,
     };
   }
 

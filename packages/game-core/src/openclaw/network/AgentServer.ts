@@ -36,6 +36,13 @@ import type { ArtDNA } from '../types';
 import { planExpansionRing, planRoadsForPlot } from '../TownPlanner';
 import { mutateArtDNA, evaluateArtFitness } from '../ArtDNA';
 import { calculateTownScore } from '../AgentCollaboration';
+import {
+  calculateCulturalValue,
+  getCulturalHappinessBonus,
+  getCulturalProductionBonus,
+  getArtEvolutionCost,
+  canAffordArtCost,
+} from '../ArtEconomy';
 import { ResourceType } from '../../types/resources';
 import { BuildingType } from '../../types/buildings';
 import { TimeSystem } from '../../systems/TimeSystem';
@@ -506,6 +513,35 @@ export class AgentServer {
 
       case 'evolve_art': {
         const intensity = (command.intensity as number) ?? 0.5;
+
+        // Art evolution costs resources
+        const artCost = getArtEvolutionCost(intensity);
+        const availableForArt: Partial<Record<ResourceType, number>> = {};
+        for (const rt of Object.values(ResourceType)) {
+          availableForArt[rt] = this.resourceStore.getResource(rt);
+        }
+        if (!canAffordArtCost(artCost.resources, availableForArt)) {
+          const needed = Object.entries(artCost.resources)
+            .map(([r, a]) => `${a} ${r}`)
+            .join(', ');
+          this.sendResult(socket, commandId, false,
+            `Can't afford art evolution (${artCost.tier}). Need: ${needed}`);
+          return;
+        }
+
+        // Deduct resources
+        for (const [resource, amount] of Object.entries(artCost.resources)) {
+          if (amount && amount > 0) {
+            const current = this.resourceStore.getResource(resource as ResourceType);
+            this.resourceStore.setResource(resource as ResourceType, current - amount);
+          }
+        }
+
+        // Track investment
+        const investmentValue = Object.values(artCost.resources).reduce((sum, v) => sum + (v ?? 0), 0);
+        agentComp.artInvestment += investmentValue;
+
+        // Mutate
         const seed = agentComp.seed + agentComp.artDNA.generation * 7919 + Math.floor(this.gameTime);
         const newDNA = mutateArtDNA(agentComp.artDNA, intensity, seed);
 
@@ -516,15 +552,24 @@ export class AgentServer {
         };
         newDNA.fitnessScore = evaluateArtFitness(newDNA, preferences);
         agentComp.artDNA = newDNA;
+        agentComp.culturalValue = calculateCulturalValue(agentComp);
 
         this.sendResult(socket, commandId, true,
-          `Art evolved to generation ${newDNA.generation} (fitness: ${newDNA.fitnessScore.toFixed(2)})`,
-          { generation: newDNA.generation, fitnessScore: newDNA.fitnessScore },
+          `Art evolved to gen ${newDNA.generation} (fitness: ${newDNA.fitnessScore.toFixed(2)}, ` +
+          `culture: ${agentComp.culturalValue.toFixed(1)}) — cost: ${artCost.tier}`,
+          {
+            generation: newDNA.generation,
+            fitnessScore: newDNA.fitnessScore,
+            culturalValue: agentComp.culturalValue,
+            costTier: artCost.tier,
+          },
         );
         this.sendEvent(socket, {
           event: 'art_evolved',
           generation: newDNA.generation,
           fitnessScore: newDNA.fitnessScore,
+          cost: artCost.tier,
+          culturalValue: agentComp.culturalValue,
         });
         break;
       }
@@ -536,11 +581,14 @@ export class AgentServer {
           return;
         }
         agentComp.artDNA = newDNA;
+        agentComp.culturalValue = calculateCulturalValue(agentComp);
         this.sendResult(socket, commandId, true, `Art DNA set (generation ${newDNA.generation})`);
         this.sendEvent(socket, {
           event: 'art_evolved',
           generation: newDNA.generation,
           fitnessScore: newDNA.fitnessScore,
+          cost: 'free',
+          culturalValue: agentComp.culturalValue,
         });
         break;
       }
@@ -686,6 +734,7 @@ export class AgentServer {
       resources[rt] = this.resourceStore.getResource(rt);
     }
 
+    const culturalValue = calculateCulturalValue(agentComp);
     const agentState: AgentStateSnapshot = {
       name: agentComp.name,
       entityId: agent.entityId as number,
@@ -699,6 +748,11 @@ export class AgentServer {
       totalBuildingsBuilt: agentComp.totalBuildingsBuilt,
       satisfaction: agentComp.satisfaction,
       townScore: calculateTownScore(agentComp),
+      artInvestment: agentComp.artInvestment,
+      culturalValue,
+      crossoversCompleted: agentComp.crossoversCompleted,
+      culturalHappinessBonus: getCulturalHappinessBonus(culturalValue),
+      culturalProductionBonus: getCulturalProductionBonus(culturalValue),
     };
 
     // Build summaries of other agents
@@ -716,6 +770,7 @@ export class AgentServer {
         citizenCount: otherComp.citizenEntities.length,
         artGeneration: otherComp.artDNA.generation,
         disposition: otherComp.socialDisposition,
+        culturalValue: otherComp.culturalValue ?? 0,
       });
     }
 
