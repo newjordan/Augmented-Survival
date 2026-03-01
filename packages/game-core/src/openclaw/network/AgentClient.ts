@@ -67,6 +67,7 @@ import type { AgentSocket } from './AgentServer';
 import type { ArtDNA, ArchitecturalStyle, AgentPriority, SocialDisposition } from '../types';
 import type { BuildingType } from '../../types/buildings';
 import type { ResourceType } from '../../types/resources';
+import type { BlockMaterial, StructureArchetype } from '../../types/blocks';
 
 /** Callback types for agent events */
 export type OnJoinAccepted = (msg: JoinAcceptedMessage) => void;
@@ -256,6 +257,149 @@ export class AgentClient {
       action: 'set_priority',
       priority: priority as AgentPriority,
     });
+  }
+
+  // ─── Block Architecture Commands ──────────────────────────────
+
+  /**
+   * Tell the agent to build a structure from a description.
+   * The agent will generate a blueprint and attempt to build it block by block.
+   *
+   * Example: buildStructure("a grand gothic cathedral with flying buttresses")
+   */
+  buildStructure(
+    description: string,
+    x?: number,
+    z?: number,
+    params?: Record<string, unknown>,
+  ): Promise<CommandResultMessage> {
+    return this.sendCommand({
+      action: 'build_structure',
+      description,
+      x,
+      z,
+      params,
+    });
+  }
+
+  /**
+   * Build a structure by archetype (more precise than description).
+   */
+  buildArchetype(
+    archetype: StructureArchetype | string,
+    x?: number,
+    z?: number,
+    params?: Record<string, unknown>,
+  ): Promise<CommandResultMessage> {
+    return this.sendCommand({
+      action: 'build_structure',
+      archetype,
+      x,
+      z,
+      params,
+    });
+  }
+
+  /**
+   * Refine raw resources into blocks for construction.
+   */
+  refineBlocks(material: BlockMaterial | string, count: number): Promise<CommandResultMessage> {
+    return this.sendCommand({
+      action: 'refine_blocks',
+      material,
+      count,
+    });
+  }
+
+  /**
+   * HOT-RELOAD: Inject a new architecture rule while the game is running.
+   *
+   * The generatorBody is a function body string that receives `ctx` (RuleContext)
+   * and returns Block[]. Helper functions available:
+   * - createBlock(shape, material, position, dimensions, role, params?)
+   * - BlockShape.Cube, BlockShape.Wedge, etc.
+   * - BlockMaterial.Stone, BlockMaterial.Wood, etc.
+   * - BlockRole.Wall, BlockRole.Column, etc.
+   *
+   * Example:
+   * ```
+   * client.injectRule(
+   *   'custom:pagoda',
+   *   'Five-Story Pagoda',
+   *   ['Temple'],
+   *   `
+   *     const blocks = [];
+   *     for (let floor = 0; floor < 5; floor++) {
+   *       const y = floor * 3;
+   *       const scale = 1 - floor * 0.15;
+   *       blocks.push(createBlock(BlockShape.Cube, BlockMaterial.Wood,
+   *         { x: 0, y, z: 0 }, { w: 6 * scale, h: 2.5, d: 6 * scale }, BlockRole.Wall));
+   *       blocks.push(createBlock(BlockShape.Wedge, BlockMaterial.Wood,
+   *         { x: 0, y: y + 2.5, z: 0 }, { w: 8 * scale, h: 1, d: 8 * scale }, BlockRole.Roof));
+   *     }
+   *     return blocks;
+   *   `,
+   *   20, // priority (higher than builtins at 10)
+   * );
+   * ```
+   */
+  injectRule(
+    ruleId: string,
+    name: string,
+    archetypes: Array<StructureArchetype | string>,
+    generatorBody: string,
+    priority = 20,
+  ): Promise<CommandResultMessage> {
+    return this.sendCommand({
+      action: 'inject_rule',
+      ruleId,
+      name,
+      archetypes,
+      generatorBody,
+      priority,
+    });
+  }
+
+  /**
+   * Remove a previously injected rule.
+   */
+  removeRule(ruleId: string): Promise<CommandResultMessage> {
+    return this.sendCommand({
+      action: 'remove_rule',
+      ruleId,
+    });
+  }
+
+  /**
+   * Preview a blueprint without building it.
+   * Returns material requirements, cultural value, and structural integrity.
+   */
+  queryBlueprint(
+    descriptionOrArchetype: string,
+    params?: Record<string, unknown>,
+  ): Promise<CommandResultMessage> {
+    // Detect if it's an archetype enum value
+    const archetypes = [
+      'Cottage', 'House', 'Manor', 'Warehouse', 'Tower',
+      'WallSegment', 'Cathedral', 'Temple', 'Market',
+      'Workshop', 'Bridge', 'Gatehouse', 'Custom',
+    ];
+    const isArchetype = archetypes.includes(descriptionOrArchetype);
+
+    return this.sendCommand({
+      action: 'query_blueprint',
+      ...(isArchetype
+        ? { archetype: descriptionOrArchetype }
+        : { description: descriptionOrArchetype }),
+      params,
+    });
+  }
+
+  /**
+   * Query the agent's current block inventory and active constructions.
+   */
+  queryBlockInventory(): Promise<CommandResultMessage> {
+    return this.sendCommand({ action: 'query_block_inventory' });
   }
 
   /**

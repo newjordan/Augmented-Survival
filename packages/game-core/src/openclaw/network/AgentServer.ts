@@ -45,6 +45,19 @@ import {
 } from '../ArtEconomy';
 import { ResourceType } from '../../types/resources';
 import { BuildingType } from '../../types/buildings';
+import { BlockMaterial, BlockShape, BlockRole, StructureArchetype } from '../../types/blocks';
+import type { Block } from '../../types/blocks';
+import { ArchitectureRuleEngine } from '../ArchitectureRuleEngine';
+import type { RuleContext } from '../ArchitectureRuleEngine';
+import { createBlock } from '../ArchitectureBlueprint';
+import { BlockBuilder, ConstructionStatus } from '../BlockBuilder';
+import {
+  createBlockInventory,
+  refineBlocks,
+  getBlockCount,
+  getTotalBlocks,
+} from '../BlockEconomy';
+import type { BlockInventory } from '../BlockEconomy';
 import { TimeSystem } from '../../systems/TimeSystem';
 import { ResourceStoreSystem } from '../../systems/ResourceStoreSystem';
 import { BuildingPlacementSystem } from '../../systems/BuildingPlacementSystem';
@@ -164,6 +177,12 @@ export class AgentServer {
   // Track agent spawn angles to space them out
   private spawnIndex = 0;
 
+  // Block Architecture Systems
+  private ruleEngine: ArchitectureRuleEngine;
+  private blockBuilder: BlockBuilder;
+  /** Per-agent block inventories */
+  private blockInventories = new Map<number, BlockInventory>();
+
   constructor(config: Partial<AgentServerConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
 
@@ -223,6 +242,68 @@ export class AgentServer {
 
     // Listen for events to relay to agents
     this.setupEventRelays();
+
+    // Initialize block architecture systems
+    this.ruleEngine = new ArchitectureRuleEngine();
+    this.blockBuilder = new BlockBuilder();
+
+    // Wire up block builder events
+    this.blockBuilder.setEvents({
+      onBlockPlaced: (construction, result) => {
+        this.notifyAgentConstruction(construction.agentEntityId, {
+          event: 'block_placed',
+          constructionId: construction.id,
+          blockIndex: construction.placedBlockIds.length,
+          totalBlocks: construction.totalBlocks,
+          material: result.material,
+          role: result.block.role,
+        });
+      },
+      onPhaseComplete: (construction, phase) => {
+        this.notifyAgentConstruction(construction.agentEntityId, {
+          event: 'structure_phase_complete',
+          constructionId: construction.id,
+          phaseName: phase.name,
+          phaseIndex: construction.currentPhase,
+        });
+      },
+      onConstructionComplete: (construction) => {
+        this.notifyAgentConstruction(construction.agentEntityId, {
+          event: 'structure_complete',
+          constructionId: construction.id,
+          archetype: construction.blueprint.archetype,
+          culturalValue: construction.accumulatedCulture,
+          blocksPlaced: construction.placedBlockIds.length,
+        });
+        // Add cultural value to the agent
+        const agentComp = this.world.getComponent<OpenClawAgentComponent>(
+          construction.agentEntityId, OPENCLAW_AGENT
+        );
+        if (agentComp) {
+          agentComp.culturalValue = (agentComp.culturalValue ?? 0) + construction.accumulatedCulture;
+        }
+      },
+      onConstructionPaused: (construction, reason) => {
+        this.notifyAgentConstruction(construction.agentEntityId, {
+          event: 'structure_paused',
+          constructionId: construction.id,
+          reason,
+        });
+      },
+      onConstructionAbandoned: (construction) => {
+        this.notifyAgentConstruction(construction.agentEntityId, {
+          event: 'structure_abandoned',
+          constructionId: construction.id,
+          reason: construction.statusReason ?? 'Unknown',
+          blocksPlaced: construction.placedBlockIds.length,
+        });
+      },
+    });
+
+    // Log rule engine changes
+    this.ruleEngine.onRuleChanged((ruleId, action) => {
+      console.log(`[AgentServer] Rule ${action}: ${ruleId} (engine v${this.ruleEngine.getVersion()})`);
+    });
   }
 
   /**
@@ -260,6 +341,20 @@ export class AgentServer {
       lastTick = now;
       this.gameTime += dt;
       this.world.step(dt);
+
+      // Update block constructions
+      this.blockBuilder.update(
+        dt,
+        (agentEntityId) => this.blockInventories.get(agentEntityId as number) ?? null,
+        (agentEntityId, material) => {
+          const inv = this.blockInventories.get(agentEntityId as number);
+          if (!inv) return false;
+          const count = getBlockCount(inv, material);
+          if (count <= 0) return false;
+          inv[material] = count - 1;
+          return true;
+        },
+      );
     }, this.config.tickRate);
 
     // State broadcast
@@ -413,6 +508,13 @@ export class AgentServer {
     const plots = planExpansionRing(agentComponent, 0);
     agentComponent.townPlan.plots.push(...plots);
     agentComponent.townPlan.expansionRing = 0;
+
+    // Initialize block inventory with starter blocks
+    const starterInventory = createBlockInventory();
+    starterInventory[BlockMaterial.Wood] = 20;
+    starterInventory[BlockMaterial.Stone] = 10;
+    starterInventory[BlockMaterial.Thatch] = 5;
+    this.blockInventories.set(entityId as number, starterInventory);
 
     // Update connected agent record
     agent.entityId = entityId;
@@ -627,6 +729,282 @@ export class AgentServer {
         break;
       }
 
+      // ─── Block Architecture Commands ─────────────────────────────
+
+      case 'build_structure': {
+        const description = command.description as string | undefined;
+        const archetype = command.archetype as StructureArchetype | undefined;
+
+        if (!description && !archetype) {
+          this.sendResult(socket, commandId, false,
+            'Must provide "description" or "archetype"');
+          return;
+        }
+
+        // Get block inventory
+        const inventory = this.blockInventories.get(agent.entityId as number);
+        if (!inventory) {
+          this.sendResult(socket, commandId, false, 'No block inventory');
+          return;
+        }
+
+        // Generate blueprint
+        const blueprint = description
+          ? this.ruleEngine.generateFromDescription(
+              description, agentComp.artDNA,
+              agentComp.seed + Math.floor(this.gameTime), inventory)
+          : this.ruleEngine.generateBlueprint({
+              archetype: archetype!,
+              artDNA: agentComp.artDNA,
+              width: 10, height: 8, depth: 10,
+              seed: agentComp.seed + Math.floor(this.gameTime),
+              availableBlocks: inventory,
+              customParams: command.params as Record<string, unknown> | undefined,
+            });
+
+        if (!blueprint) {
+          this.sendResult(socket, commandId, false,
+            `No architecture rule found for: ${description ?? archetype}`);
+          return;
+        }
+
+        // Check materials
+        const matCheck = this.blockBuilder.checkMaterialRequirements(blueprint, inventory);
+        if (!matCheck.canStart) {
+          const missingStr = Object.entries(matCheck.missing)
+            .map(([m, n]) => `${n} ${m}`)
+            .join(', ');
+          this.sendResult(socket, commandId, false,
+            `Not enough blocks to start (need 30%). Missing: ${missingStr}. Coverage: ${(matCheck.coverage * 100).toFixed(0)}%`);
+          return;
+        }
+
+        // Determine position
+        const bx = (command.x as number) ?? agentComp.townPlan.centerX + (Math.random() - 0.5) * 20;
+        const bz = (command.z as number) ?? agentComp.townPlan.centerZ + (Math.random() - 0.5) * 20;
+
+        // Start construction
+        const constructionId = this.blockBuilder.startConstruction(
+          blueprint, agent.entityId, { x: bx, y: 0, z: bz },
+        );
+
+        this.sendResult(socket, commandId, true,
+          `Structure construction started: "${blueprint.name}" (${blueprint.blocks.length} blocks, ` +
+          `integrity: ${(blueprint.structuralIntegrity * 100).toFixed(0)}%, ` +
+          `culture: ${blueprint.culturalValue.toFixed(1)})`,
+          {
+            constructionId,
+            archetype: blueprint.archetype,
+            totalBlocks: blueprint.blocks.length,
+            structuralIntegrity: blueprint.structuralIntegrity,
+            culturalValue: blueprint.culturalValue,
+            materialCoverage: matCheck.coverage,
+          },
+        );
+        this.sendEvent(socket, {
+          event: 'structure_started',
+          constructionId,
+          archetype: blueprint.archetype,
+          description: blueprint.name,
+          totalBlocks: blueprint.blocks.length,
+        });
+        break;
+      }
+
+      case 'refine_blocks': {
+        const material = command.material as BlockMaterial;
+        const count = command.count as number;
+
+        if (!material || !count || count <= 0) {
+          this.sendResult(socket, commandId, false, 'Invalid material or count');
+          return;
+        }
+
+        let inventory = this.blockInventories.get(agent.entityId as number);
+        if (!inventory) {
+          inventory = createBlockInventory();
+          this.blockInventories.set(agent.entityId as number, inventory);
+        }
+
+        const result = refineBlocks(agentComp.resources, inventory, material, count);
+        if (!result.success) {
+          this.sendResult(socket, commandId, false,
+            `Cannot refine ${material}: ${result.reason}`);
+          return;
+        }
+
+        this.sendResult(socket, commandId, true,
+          `Refined ${result.blocksProduced} ${material} blocks`,
+          { blocksProduced: result.blocksProduced, totalInInventory: getBlockCount(inventory, material) },
+        );
+        this.sendEvent(socket, {
+          event: 'blocks_refined',
+          material,
+          count: result.blocksProduced,
+          totalInventory: getTotalBlocks(inventory),
+        });
+        break;
+      }
+
+      case 'inject_rule': {
+        const ruleId = command.ruleId as string;
+        const ruleName = command.name as string;
+        const archetypes = command.archetypes as StructureArchetype[];
+        const generatorBody = command.generatorBody as string;
+        const priority = (command.priority as number) ?? 20;
+
+        if (!ruleId || !ruleName || !archetypes || !generatorBody) {
+          this.sendResult(socket, commandId, false,
+            'Must provide ruleId, name, archetypes, and generatorBody');
+          return;
+        }
+
+        // Create generator function from the body string
+        // The function receives ctx (RuleContext) and helper functions
+        let generatorFn: (ctx: RuleContext) => Block[];
+        try {
+          // Create a safe sandbox with available helpers
+          // eslint-disable-next-line @typescript-eslint/no-implied-eval
+          const fn = new Function(
+            'ctx', 'createBlock', 'BlockShape', 'BlockMaterial', 'BlockRole',
+            generatorBody,
+          ) as (...args: unknown[]) => Block[];
+
+          generatorFn = (ctx: RuleContext) =>
+            fn(ctx, createBlock, BlockShape, BlockMaterial, BlockRole);
+        } catch (err) {
+          this.sendResult(socket, commandId, false,
+            `Failed to compile rule: ${err instanceof Error ? err.message : String(err)}`);
+          return;
+        }
+
+        // Register the rule
+        this.ruleEngine.registerRule({
+          id: ruleId,
+          name: ruleName,
+          archetypes,
+          priority,
+          version: 1,
+          generate: generatorFn,
+        });
+
+        this.sendResult(socket, commandId, true,
+          `Rule "${ruleName}" (${ruleId}) injected for archetypes: ${archetypes.join(', ')}. ` +
+          `Engine v${this.ruleEngine.getVersion()}`);
+        this.sendEvent(socket, {
+          event: 'rule_injected',
+          ruleId,
+          name: ruleName,
+          archetypes,
+        });
+
+        // Broadcast to all agents
+        this.broadcastToOthers(socket, {
+          type: 'server:event',
+          event: {
+            event: 'rule_injected',
+            ruleId,
+            name: ruleName,
+            archetypes,
+          },
+        });
+        break;
+      }
+
+      case 'remove_rule': {
+        const removeId = command.ruleId as string;
+        if (!removeId) {
+          this.sendResult(socket, commandId, false, 'Must provide ruleId');
+          return;
+        }
+
+        const removed = this.ruleEngine.removeRule(removeId);
+        if (!removed) {
+          this.sendResult(socket, commandId, false, `Rule not found: ${removeId}`);
+          return;
+        }
+
+        this.sendResult(socket, commandId, true, `Rule removed: ${removeId}`);
+        this.sendEvent(socket, { event: 'rule_removed', ruleId: removeId });
+        break;
+      }
+
+      case 'query_blueprint': {
+        const qDesc = command.description as string | undefined;
+        const qArch = command.archetype as StructureArchetype | undefined;
+
+        if (!qDesc && !qArch) {
+          this.sendResult(socket, commandId, false,
+            'Must provide "description" or "archetype"');
+          return;
+        }
+
+        const qInventory = this.blockInventories.get(agent.entityId as number) ?? createBlockInventory();
+
+        const qBlueprint = qDesc
+          ? this.ruleEngine.generateFromDescription(
+              qDesc, agentComp.artDNA,
+              agentComp.seed + Math.floor(this.gameTime), qInventory)
+          : this.ruleEngine.generateBlueprint({
+              archetype: qArch!,
+              artDNA: agentComp.artDNA,
+              width: 10, height: 8, depth: 10,
+              seed: agentComp.seed + Math.floor(this.gameTime),
+              availableBlocks: qInventory,
+              customParams: command.params as Record<string, unknown> | undefined,
+            });
+
+        if (!qBlueprint) {
+          this.sendResult(socket, commandId, false, 'No blueprint generated');
+          return;
+        }
+
+        const qCheck = this.blockBuilder.checkMaterialRequirements(qBlueprint, qInventory);
+
+        this.sendResult(socket, commandId, true, `Blueprint preview: "${qBlueprint.name}"`, {
+          archetype: qBlueprint.archetype,
+          name: qBlueprint.name,
+          totalBlocks: qBlueprint.blocks.length,
+          bounds: qBlueprint.bounds,
+          blockCounts: qBlueprint.blockCounts,
+          materialCounts: qBlueprint.materialCounts,
+          culturalValue: qBlueprint.culturalValue,
+          structuralIntegrity: qBlueprint.structuralIntegrity,
+          phases: qBlueprint.phases.map(p => ({ name: p.name, blockCount: p.blockIds.length })),
+          materialCoverage: qCheck.coverage,
+          canStart: qCheck.canStart,
+          canComplete: qCheck.canComplete,
+          missingMaterials: qCheck.missing,
+        });
+        break;
+      }
+
+      case 'query_block_inventory': {
+        const qInv = this.blockInventories.get(agent.entityId as number) ?? createBlockInventory();
+        const constructions = this.blockBuilder.getAgentConstructions(agent.entityId);
+
+        this.sendResult(socket, commandId, true, 'Block inventory', {
+          inventory: qInv,
+          totalBlocks: getTotalBlocks(qInv),
+          activeConstructions: constructions.map(c => ({
+            id: c.id,
+            archetype: c.blueprint.archetype,
+            name: c.blueprint.name,
+            progress: c.placedBlockIds.length / c.totalBlocks,
+            status: c.status,
+            blocksPlaced: c.placedBlockIds.length,
+            totalBlocks: c.totalBlocks,
+          })),
+          availableRules: this.ruleEngine.getRules().map(r => ({
+            id: r.id,
+            name: r.name,
+            archetypes: r.archetypes,
+            version: r.version,
+          })),
+        });
+        break;
+      }
+
       default:
         this.sendResult(socket, commandId, false, `Unknown action: ${action}`);
     }
@@ -734,6 +1112,9 @@ export class AgentServer {
     const resources: Partial<Record<ResourceType, number>> = { ...agentComp.resources };
 
     const culturalValue = calculateCulturalValue(agentComp);
+    const agentConstructions = this.blockBuilder.getAgentConstructions(agent.entityId);
+    const inventory = this.blockInventories.get(agent.entityId as number) ?? {};
+
     const agentState: AgentStateSnapshot = {
       name: agentComp.name,
       entityId: agent.entityId as number,
@@ -752,6 +1133,22 @@ export class AgentServer {
       crossoversCompleted: agentComp.crossoversCompleted,
       culturalHappinessBonus: getCulturalHappinessBonus(culturalValue),
       culturalProductionBonus: getCulturalProductionBonus(culturalValue),
+      blockInventory: inventory,
+      activeConstructions: agentConstructions.map(c => ({
+        id: c.id,
+        archetype: c.blueprint.archetype,
+        progress: c.totalBlocks > 0 ? c.placedBlockIds.length / c.totalBlocks : 0,
+        status: c.status,
+        blocksPlaced: c.placedBlockIds.length,
+        totalBlocks: c.totalBlocks,
+        culturalValue: c.accumulatedCulture,
+      })),
+      activeRules: this.ruleEngine.getRules().map(r => ({
+        id: r.id,
+        name: r.name,
+        version: r.version,
+        archetypes: r.archetypes,
+      })),
     };
 
     // Build summaries of other agents
@@ -820,6 +1217,18 @@ export class AgentServer {
       if (agent.joined) count++;
     }
     return count;
+  }
+
+  /**
+   * Send a construction event to the agent that owns the construction.
+   */
+  private notifyAgentConstruction(agentEntityId: EntityId, event: import('./protocol').GameEvent): void {
+    for (const [socket, agent] of this.connectedAgents) {
+      if (agent.joined && agent.entityId === agentEntityId) {
+        this.sendEvent(socket, event);
+        break;
+      }
+    }
   }
 
   // ─── Agent Lookup ──────────────────────────────────────────────

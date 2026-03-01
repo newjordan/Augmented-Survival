@@ -75,6 +75,44 @@ export {
   calculateTownScore,
 } from './AgentCollaboration';
 
+// Block Architecture System
+export { ArchitectureRuleEngine } from './ArchitectureRuleEngine';
+export type { ArchitectureRule, RuleContext, RuleGeneratorFn } from './ArchitectureRuleEngine';
+
+export type {
+  ArchitectureBlueprint,
+  BuildPhase,
+  BlueprintMetadata,
+} from './ArchitectureBlueprint';
+export {
+  createBlock,
+  applyArtDNAColor,
+  computeBuildPhases,
+  computeBlockCounts,
+  computeBounds,
+  validateBlueprint,
+  resetBlockIds,
+} from './ArchitectureBlueprint';
+
+export { BlockBuilder, ConstructionStatus } from './BlockBuilder';
+export type {
+  ActiveConstruction,
+  BlockPlacementResult,
+  BlockBuilderEvents,
+} from './BlockBuilder';
+
+export type { BlockInventory } from './BlockEconomy';
+export {
+  createBlockInventory,
+  getBlockCount,
+  getTotalBlocks,
+  canRefine,
+  refineBlocks,
+  chooseMaterial,
+  getBlockCulturalValue,
+  planRefining,
+} from './BlockEconomy';
+
 // Town System
 export { OpenClawTownSystem } from './OpenClawTownSystem';
 export type { OpenClawTownCallbacks } from './OpenClawTownSystem';

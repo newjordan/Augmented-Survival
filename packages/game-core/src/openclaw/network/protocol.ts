@@ -16,6 +16,8 @@
 import type { ArtDNA, ArchitecturalStyle, AgentPriority, SocialDisposition, TownPlan } from '../types';
 import type { ResourceType } from '../../types/resources';
 import type { BuildingType } from '../../types/buildings';
+import type { BlockMaterial, StructureArchetype } from '../../types/blocks';
+import type { BlockInventory } from '../BlockEconomy';
 
 // ─── Client → Server Messages ────────────────────────────────────────
 
@@ -80,7 +82,13 @@ export type AgentCommand =
   | TradeOfferCommand
   | SpawnCitizenCommand
   | ExpandTerritoryCommand
-  | SetPriorityCommand;
+  | SetPriorityCommand
+  | BuildStructureCommand
+  | RefineBlocksCommand
+  | InjectRuleCommand
+  | RemoveRuleCommand
+  | QueryBlueprintCommand
+  | QueryBlockInventoryCommand;
 
 export interface PlaceBuildingCommand {
   action: 'place_building';
@@ -125,6 +133,103 @@ export interface ExpandTerritoryCommand {
 export interface SetPriorityCommand {
   action: 'set_priority';
   priority: AgentPriority;
+}
+
+// ─── Block Architecture Commands (Hot-Reload / Operator) ────────────
+
+/**
+ * Operator tells an agent to build a structure.
+ * Can use natural-language description ("build a gothic cathedral")
+ * or specify an archetype directly.
+ *
+ * The agent will attempt to generate a blueprint from the description,
+ * check materials, and begin block-by-block construction.
+ */
+export interface BuildStructureCommand {
+  action: 'build_structure';
+  /** Natural-language description: "a grand cathedral with flying buttresses" */
+  description?: string;
+  /** Or specify archetype directly */
+  archetype?: StructureArchetype;
+  /** Build position (defaults to next available town plot) */
+  x?: number;
+  z?: number;
+  /** Custom parameters for generation */
+  params?: Record<string, unknown>;
+}
+
+/**
+ * Refine raw resources into blocks for construction.
+ */
+export interface RefineBlocksCommand {
+  action: 'refine_blocks';
+  /** Material to refine */
+  material: BlockMaterial;
+  /** Number of blocks to produce */
+  count: number;
+}
+
+/**
+ * HOT-RELOAD: Inject a new architecture rule while the game is running.
+ *
+ * This is the core hot-reload mechanism. The rule's generator function
+ * is provided as a serialized function body string that gets evaluated.
+ *
+ * Example:
+ *   {
+ *     action: 'inject_rule',
+ *     ruleId: 'custom:pagoda',
+ *     name: 'Japanese Pagoda',
+ *     archetypes: ['Temple'],
+ *     generatorBody: 'const blocks = []; ... return blocks;'
+ *   }
+ *
+ * The generatorBody receives a `ctx` parameter (RuleContext) and must
+ * return Block[]. It has access to the createBlock helper.
+ */
+export interface InjectRuleCommand {
+  action: 'inject_rule';
+  /** Unique rule ID (prefix with 'custom:' for custom rules) */
+  ruleId: string;
+  /** Human-readable name */
+  name: string;
+  /** Which archetypes this rule handles */
+  archetypes: StructureArchetype[];
+  /** Priority (higher = preferred, builtin rules are 10) */
+  priority?: number;
+  /**
+   * The generator function body as a string.
+   * Receives: ctx (RuleContext)
+   * Available helpers: createBlock, BlockShape, BlockMaterial, BlockRole
+   * Must return: Block[]
+   */
+  generatorBody: string;
+}
+
+/**
+ * Remove a previously injected rule.
+ */
+export interface RemoveRuleCommand {
+  action: 'remove_rule';
+  ruleId: string;
+}
+
+/**
+ * Preview a blueprint without building it.
+ * Returns the block list, material requirements, and cultural value.
+ */
+export interface QueryBlueprintCommand {
+  action: 'query_blueprint';
+  description?: string;
+  archetype?: StructureArchetype;
+  params?: Record<string, unknown>;
+}
+
+/**
+ * Query the agent's current block inventory.
+ */
+export interface QueryBlockInventoryCommand {
+  action: 'query_block_inventory';
 }
 
 // ─── Server → Client Messages ────────────────────────────────────────
@@ -235,6 +340,20 @@ export interface AgentStateSnapshot {
   culturalHappinessBonus: number;
   /** Resource production multiplier from culture (1.0 = baseline) */
   culturalProductionBonus: number;
+  /** Block inventory — refined blocks ready for construction */
+  blockInventory: BlockInventory;
+  /** Active block constructions in progress */
+  activeConstructions: Array<{
+    id: string;
+    archetype: string;
+    progress: number;
+    status: string;
+    blocksPlaced: number;
+    totalBlocks: number;
+    culturalValue: number;
+  }>;
+  /** Currently loaded architecture rules */
+  activeRules: Array<{ id: string; name: string; version: number; archetypes: string[] }>;
 }
 
 /** Summary of another agent (limited info) */
@@ -260,7 +379,16 @@ export type GameEvent =
   | { event: 'trade_completed'; partnerName: string; description: string }
   | { event: 'citizen_spawned'; citizenId: number }
   | { event: 'territory_expanded'; ring: number; newPlots: number }
-  | { event: 'agent_nearby'; agentName: string; agentEntityId: number; distance: number };
+  | { event: 'agent_nearby'; agentName: string; agentEntityId: number; distance: number }
+  | { event: 'blocks_refined'; material: string; count: number; totalInventory: number }
+  | { event: 'structure_started'; constructionId: string; archetype: string; description: string; totalBlocks: number }
+  | { event: 'block_placed'; constructionId: string; blockIndex: number; totalBlocks: number; material: string; role: string }
+  | { event: 'structure_phase_complete'; constructionId: string; phaseName: string; phaseIndex: number }
+  | { event: 'structure_complete'; constructionId: string; archetype: string; culturalValue: number; blocksPlaced: number }
+  | { event: 'structure_paused'; constructionId: string; reason: string }
+  | { event: 'structure_abandoned'; constructionId: string; reason: string; blocksPlaced: number }
+  | { event: 'rule_injected'; ruleId: string; name: string; archetypes: string[] }
+  | { event: 'rule_removed'; ruleId: string };
 
 // ─── Utilities ──────────────────────────────────────────────────────
 
