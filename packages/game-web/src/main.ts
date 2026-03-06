@@ -11,8 +11,20 @@ import { SelectionManager } from './game/SelectionManager.js';
 import { BuildingGhostPreview } from './game/BuildingGhostPreview.js';
 import { GameUI } from './ui/GameUI.js';
 import { VILLAGER_SIDEBAR_SELECT_EVENT } from './ui/VillagerSidebar.js';
-import { CITIZEN, TRANSFORM } from '@augmented-survival/game-core';
-import type { EntityId, TransformComponent } from '@augmented-survival/game-core';
+import {
+  CITIZEN,
+  TRANSFORM,
+  saveGame,
+  type EntityId,
+  type TransformComponent,
+  type SaveData,
+} from '@augmented-survival/game-core';
+import {
+  createDesktopStorageProvider,
+  DESKTOP_MENU_SLOT,
+  getDesktopMenuEvents,
+  loadDesktopSaveData,
+} from './utils/DesktopBridge.js';
 
 class GameApp {
   private gameRenderer: GameRenderer;
@@ -25,7 +37,7 @@ class GameApp {
   private lastTime = 0;
   private animationFrameId = 0;
 
-  constructor(container: HTMLElement) {
+  constructor(container: HTMLElement, initialSaveData?: SaveData) {
     this.container = container;
 
     // Camera controller (creates THREE.PerspectiveCamera internally)
@@ -44,7 +56,7 @@ class GameApp {
     this.gameRenderer.scene.remove(this.gameRenderer.groundPlane);
 
     // Create game world (wires ECS, terrain, environment, systems)
-    this.gameWorld = new GameWorld(this.gameRenderer.scene);
+    this.gameWorld = new GameWorld(this.gameRenderer.scene, initialSaveData);
 
     // Selection
     this.selectionManager = new SelectionManager(
@@ -169,6 +181,10 @@ class GameApp {
     this.gameWorld.dispose();
     this.cameraController.dispose();
     this.gameRenderer.dispose();
+
+    if (window.__gameApp === this) {
+      delete window.__gameApp;
+    }
   }
 
   private onSidebarSelect = (event: Event): void => {
@@ -191,14 +207,83 @@ class GameApp {
   }
 }
 
+class GameRuntime {
+  private app: GameApp;
+  private readonly storageProvider = createDesktopStorageProvider();
+
+  constructor(private readonly container: HTMLElement) {
+    this.app = new GameApp(container);
+  }
+
+  start(): void {
+    this.app.start();
+  }
+
+  async saveToDesktopSlot(slot = DESKTOP_MENU_SLOT): Promise<void> {
+    if (!this.storageProvider) {
+      return;
+    }
+
+    const gameWorld = this.app.getGameWorld();
+    await saveGame(
+      slot,
+      this.storageProvider,
+      gameWorld.world,
+      gameWorld.resourceStore,
+      gameWorld.timeSystem,
+      gameWorld.eventBus,
+    );
+  }
+
+  async loadFromDesktopSlot(slot = DESKTOP_MENU_SLOT): Promise<boolean> {
+    if (!this.storageProvider) {
+      return false;
+    }
+
+    const saveData = await loadDesktopSaveData(slot, this.storageProvider);
+    if (!saveData) {
+      console.warn(`[Augmented Survival] No desktop save found for slot "${slot}"`);
+      return false;
+    }
+
+    this.replaceApp(saveData);
+    return true;
+  }
+
+  private replaceApp(initialSaveData: SaveData): void {
+    this.app.dispose();
+    this.app = new GameApp(this.container, initialSaveData);
+    this.app.start();
+    this.app.getGameWorld().eventBus.emit('GameLoaded', {
+      slot: initialSaveData.slot || DESKTOP_MENU_SLOT,
+      timestamp: initialSaveData.timestamp,
+    });
+  }
+}
+
 // ---- Bootstrap ----
 const container = document.getElementById('app');
 if (!container) {
   throw new Error('Missing #app container element');
 }
 
-const app = new GameApp(container);
-app.start();
+const runtime = new GameRuntime(container);
+runtime.start();
+
+const desktopMenuEvents = getDesktopMenuEvents();
+if (desktopMenuEvents) {
+  desktopMenuEvents.onMenuSave(() => {
+    void runtime.saveToDesktopSlot().catch((error: unknown) => {
+      console.error('[Augmented Survival] Failed to save desktop game', error);
+    });
+  });
+
+  desktopMenuEvents.onMenuLoad(() => {
+    void runtime.loadFromDesktopSlot().catch((error: unknown) => {
+      console.error('[Augmented Survival] Failed to load desktop game', error);
+    });
+  });
+}
 
 // Export type for UI
 export type { GameApp };

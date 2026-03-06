@@ -17,6 +17,13 @@ import {
   createJobAssignment,
   type JobAssignmentComponent,
 } from '../ecs/components/JobAssignmentComponent';
+import { ANIMAL, createAnimal, type AnimalComponent } from '../ecs/components/AnimalComponent';
+import {
+  DEPLETED_RESOURCE,
+  createDepletedResource,
+  type DepletedResourceComponent,
+} from '../ecs/components/DepletedResourceComponent';
+import { SELECTABLE, type SelectableComponent } from '../ecs/components/SelectableComponent';
 import { TRANSFORM, createTransform, type TransformComponent } from '../ecs/components/TransformComponent';
 import { BuildingType } from '../types/buildings';
 import { JobType } from '../types/jobs';
@@ -126,6 +133,8 @@ describe('SaveLoadSystem', () => {
     const buildingId = sourceWorld.createEntity();
     const workerId = sourceWorld.createEntity();
     const constructionId = sourceWorld.createEntity();
+    const animalId = sourceWorld.createEntity();
+    const depletedResourceId = sourceWorld.createEntity();
 
     const building = createBuilding(BuildingType.StorageBarn, 1, true);
     building.workers.push(workerId);
@@ -140,9 +149,15 @@ describe('SaveLoadSystem', () => {
 
     sourceWorld.addComponent(buildingId, BUILDING, building);
     sourceWorld.addComponent(buildingId, STORAGE, storage);
+    sourceWorld.addComponent(buildingId, SELECTABLE, { selected: false, hoverHighlight: false });
     sourceWorld.addComponent(workerId, INVENTORY, inventory);
     sourceWorld.addComponent(workerId, JOB_ASSIGNMENT, createJobAssignment(JobType.Woodcutter, buildingId));
+    sourceWorld.addComponent(workerId, SELECTABLE, { selected: true, hoverHighlight: false });
     sourceWorld.addComponent(constructionId, CONSTRUCTION_SITE, site);
+    sourceWorld.addComponent(animalId, ANIMAL, createAnimal('sheep', 'wandering', { x: 3, y: 0, z: 4 }));
+    sourceWorld.addComponent(animalId, SELECTABLE, { selected: false, hoverHighlight: true });
+    sourceWorld.addComponent(depletedResourceId, DEPLETED_RESOURCE, createDepletedResource(45));
+    sourceWorld.getComponent<DepletedResourceComponent>(depletedResourceId, DEPLETED_RESOURCE)!.elapsed = 12;
 
     sourceSystems.resourceStore.setResource(ResourceType.Stone, 42);
     sourceSystems.timeSystem.setTimeScale(2);
@@ -158,14 +173,20 @@ describe('SaveLoadSystem', () => {
     const loadedBuildingId = world.query(BUILDING)[0];
     const loadedWorkerId = world.query(JOB_ASSIGNMENT)[0];
     const loadedConstructionId = world.query(CONSTRUCTION_SITE)[0];
+    const loadedAnimalId = world.query(ANIMAL)[0];
+    const loadedDepletedResourceId = world.query(DEPLETED_RESOURCE)[0];
 
     const loadedBuilding = world.getComponent<BuildingComponent>(loadedBuildingId, BUILDING)!;
     const loadedStorage = world.getComponent<StorageComponent>(loadedBuildingId, STORAGE)!;
     const loadedInventory = world.getComponent<InventoryComponent>(loadedWorkerId, INVENTORY)!;
     const loadedJobAssignment = world.getComponent<JobAssignmentComponent>(loadedWorkerId, JOB_ASSIGNMENT)!;
     const loadedSite = world.getComponent<ConstructionSiteComponent>(loadedConstructionId, CONSTRUCTION_SITE)!;
+    const loadedWorkerSelectable = world.getComponent<SelectableComponent>(loadedWorkerId, SELECTABLE)!;
+    const loadedAnimal = world.getComponent<AnimalComponent>(loadedAnimalId, ANIMAL)!;
+    const loadedAnimalSelectable = world.getComponent<SelectableComponent>(loadedAnimalId, SELECTABLE)!;
+    const loadedDepletedResource = world.getComponent<DepletedResourceComponent>(loadedDepletedResourceId, DEPLETED_RESOURCE)!;
 
-    expect(world.entityCount()).toBe(3);
+    expect(world.entityCount()).toBe(5);
     expect(loadedBuildingId).not.toBe(buildingId);
     expect(loadedWorkerId).not.toBe(workerId);
     expect(loadedBuilding.workers).toEqual([loadedWorkerId]);
@@ -176,6 +197,13 @@ describe('SaveLoadSystem', () => {
     expect(loadedInventory.items.get(ResourceType.Food)).toBe(4);
     expect(loadedSite.requiredMaterials).toBeInstanceOf(Map);
     expect(loadedSite.deliveredMaterials.get(ResourceType.Stone)).toBe(2);
+    expect(loadedWorkerSelectable.selected).toBe(true);
+    expect(loadedAnimal.type).toBe('sheep');
+    expect(loadedAnimal.state).toBe('wandering');
+    expect(loadedAnimal.targetPosition).toEqual({ x: 3, y: 0, z: 4 });
+    expect(loadedAnimalSelectable.hoverHighlight).toBe(true);
+    expect(loadedDepletedResource.respawnDelay).toBe(45);
+    expect(loadedDepletedResource.elapsed).toBe(12);
     expect(resourceStore.getResource(ResourceType.Stone)).toBe(42);
     expect(timeSystem.getTimeScale()).toBe(2);
   });
