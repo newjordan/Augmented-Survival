@@ -9,5 +9,6 @@ export enum BuildingType {
   FarmField = 'FarmField',
   Quarry = 'Quarry',
   SheepPen = 'SheepPen',
+  ChickenCoop = 'ChickenCoop',
 }
 
