@@ -135,7 +135,8 @@ class GameApp {
     this.onResize();
 
     console.log('[Augmented Survival] Game initialized');
-    console.log('[Augmented Survival] Photo helpers: __gameApp.stageSheepPenShowcase(), __gameApp.captureSheepPenMarketingShot(), __gameApp.restoreGameplayView()');
+    console.log('[Augmented Survival] HUD helpers: __gameApp.setUIVisible(false), __gameApp.setUIVisible(true)');
+    console.log('[Augmented Survival] Photo helpers: __gameApp.stageSheepPenShowcase(), __gameApp.captureSheepPenMarketingShot(), __gameApp.stageChickenCoopShowcase(), __gameApp.captureChickenCoopMarketingShot(), __gameApp.restoreGameplayView()');
   }
 
   // Public API for UI
@@ -151,22 +152,27 @@ class GameApp {
     this.gameUI.setVisible(visible);
   }
 
-  stageSheepPenShowcase(): { buildingId: EntityId | null; position: THREE.Vector3 } {
+  private stageBuildingShowcase(
+    buildingType: BuildingType,
+    placement: { x: number; y: number; z: number },
+    fallbackFocus: THREE.Vector3,
+  ): { buildingId: EntityId | null; position: THREE.Vector3 } {
     if (this.showcasePreviousRenderSettings == null) {
       this.showcasePreviousRenderSettings = this.gameRenderer.getSettings();
       this.showcasePreviousTimeScale = this.gameWorld.timeSystem.getTimeScale();
       this.showcaseWasPaused = this.gameWorld.timeSystem.isPaused();
     }
 
+    const showcaseBuilding = this.showcaseBuildingId != null
+      ? this.gameWorld.world.getComponent<{ type: BuildingType }>(this.showcaseBuildingId, BUILDING)
+      : null;
+
     if (
-      this.showcaseBuildingId == null ||
-      !this.gameWorld.world.getComponent(this.showcaseBuildingId, BUILDING)
+      this.showcaseBuildingId == null
+      || !showcaseBuilding
+      || showcaseBuilding.type !== buildingType
     ) {
-      this.showcaseBuildingId = this.gameWorld.placeCompletedBuilding(BuildingType.SheepPen, {
-        x: 11,
-        y: 0,
-        z: 12,
-      });
+      this.showcaseBuildingId = this.gameWorld.placeCompletedBuilding(buildingType, placement);
     }
 
     const transform = this.showcaseBuildingId != null
@@ -174,7 +180,7 @@ class GameApp {
       : null;
     const focus = transform
       ? new THREE.Vector3(transform.position.x + 0.2, 0, transform.position.z + 0.1)
-      : new THREE.Vector3(11.2, 0, 12.1);
+      : fallbackFocus.clone();
 
     this.cameraController.focusOn(focus, {
       duration: 1.25,
@@ -187,6 +193,22 @@ class GameApp {
     this.gameUI.setVisible(false);
 
     return { buildingId: this.showcaseBuildingId, position: focus };
+  }
+
+  stageSheepPenShowcase(): { buildingId: EntityId | null; position: THREE.Vector3 } {
+    return this.stageBuildingShowcase(
+      BuildingType.SheepPen,
+      { x: 11, y: 0, z: 12 },
+      new THREE.Vector3(11.2, 0, 12.1),
+    );
+  }
+
+  stageChickenCoopShowcase(): { buildingId: EntityId | null; position: THREE.Vector3 } {
+    return this.stageBuildingShowcase(
+      BuildingType.ChickenCoop,
+      { x: 16, y: 0, z: 10 },
+      new THREE.Vector3(16.2, 0, 10.1),
+    );
   }
 
   restoreGameplayView(): void {
@@ -216,6 +238,12 @@ class GameApp {
 
   async captureSheepPenMarketingShot(filename = 'sheep-pen-marketing'): Promise<string> {
     this.stageSheepPenShowcase();
+    await new Promise((resolve) => window.setTimeout(resolve, 1400));
+    return this.captureScreenshot(filename);
+  }
+
+  async captureChickenCoopMarketingShot(filename = 'chicken-coop-marketing'): Promise<string> {
+    this.stageChickenCoopShowcase();
     await new Promise((resolve) => window.setTimeout(resolve, 1400));
     return this.captureScreenshot(filename);
   }

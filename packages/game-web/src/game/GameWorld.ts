@@ -703,30 +703,28 @@ export class GameWorld {
         }
       }
 
-      if (event.buildingType === BuildingType.SheepPen) {
-        const pen = this.world.getComponent<LivestockPenComponent>(event.buildingId, LIVESTOCK_PEN);
-        const transform = this.world.getComponent<TransformComponent>(event.buildingId, TRANSFORM);
+      const pen = this.world.getComponent<LivestockPenComponent>(event.buildingId, LIVESTOCK_PEN);
+      const transform = this.world.getComponent<TransformComponent>(event.buildingId, TRANSFORM);
 
-        if (pen && transform) {
-          for (let i = 0; i < pen.spawnCount; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            const radius = Math.random() * pen.spawnRadius;
-            const spawnPos = {
-              x: transform.position.x + Math.cos(angle) * radius,
-              y: transform.position.y,
-              z: transform.position.z + Math.sin(angle) * radius,
-            };
-            const animalId = this.spawnAnimalAt(pen.animalType, spawnPos);
-            this.world.addComponent(
-              animalId,
-              DOMESTIC_ANIMAL,
-              createDomesticAnimal(
-                event.buildingId,
-                transform.position,
-                pen.homeRadius,
-              ),
-            );
-          }
+      if (pen && transform) {
+        for (let i = 0; i < pen.spawnCount; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const radius = Math.random() * pen.spawnRadius;
+          const spawnPos = {
+            x: transform.position.x + Math.cos(angle) * radius,
+            y: transform.position.y,
+            z: transform.position.z + Math.sin(angle) * radius,
+          };
+          const animalId = this.spawnAnimalAt(pen.animalType, spawnPos);
+          this.world.addComponent(
+            animalId,
+            DOMESTIC_ANIMAL,
+            createDomesticAnimal(
+              event.buildingId,
+              transform.position,
+              pen.homeRadius,
+            ),
+          );
         }
       }
     });
